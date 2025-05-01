@@ -10,7 +10,7 @@ class Agent(object):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.action_space = gym.spaces.Discrete(12)
         self.agent = DQNAgent(action_size=12)
-        self.agent.load_checkpoint('mario_episode_300-2')
+        self.agent.load_checkpoint('mario_episode_400')
         self.frame_stack = deque(maxlen=4)
         self.action_buffer = []
 
