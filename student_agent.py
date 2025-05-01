@@ -14,6 +14,7 @@ class Agent(object):
         self.frame_stack = deque(maxlen=4)
         self.action_buffer = []
 
+
     def _preprocess(self, observation):
         """
         Convert raw RGB observation to (4,84,84) tensor:
