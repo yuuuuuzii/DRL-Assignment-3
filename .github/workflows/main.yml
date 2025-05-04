@@ -34,7 +34,7 @@ jobs:
 
     - name: 3.5 Download model from Google Drive
       run: |
-        gdown https://drive.google.com/uc?id=1iOcSfbW3Y1TuHPczEr_WiZXpJecXaHJX -O mario_episode_600_checkpoint.pth
-    
+        gdown https://drive.google.com/uc?id=1tloTEj9pQUHOpjXmgyuViPIv8R-4J1Wc -O mario_episode_900-1_checkpoint.pth
+      
     - name: 4. Run Evaluation
       run: python eval.py --token a91aae52cff9ef65932db06b150ffd47

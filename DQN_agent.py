@@ -1,5 +1,5 @@
 import torch
-from util import QNet, PrioritizedReplayBuffer , LittleBuffer , NoisyLinear
+from util import QNet, PrioritizedReplayBuffer , LittleBuffer , NoisyLinear, ICM
 import numpy as np
 import ipdb
 import os
@@ -20,9 +20,9 @@ class DQNAgent: # 用Double DQN
         self.intrinsic_reward = []
         self.rewards_e = []
         self.step_count = 0
-        self.sigma_init = 2.5
-        self.episode = 5000
-        self.lr = 0.0008
+        self.sigma_init = 3
+        self.episode = 10000
+        self.lr = 0.00008
         self.update_frequency = 1
         self.tau = 0.000005
         self.alpha = 0.15
@@ -34,21 +34,14 @@ class DQNAgent: # 用Double DQN
         self.target_net.eval()
         self.buffer = PrioritizedReplayBuffer(self.buffer_size)
         self.little_buffer = LittleBuffer(n_step=9, gamma= self.gamma)
-        self.optimizer= torch.optim.Adam(list(self.q_net.parameters()), lr=self.lr)
+        self.optimizer= torch.optim.Adam(self.q_net.parameters(), lr=self.lr)
 
-        # 
-        # self.eta = 0.1
-        # self.clip = 5
-        # 共用 q_net 的 feature_extractor
-        # self.icm = ICM(n_actions=self.action_size, feature_dim = 512, encoder=self.q_net.feature_extractor).to(self.device)
-
-        
-        # encoder_params = set(self.q_net.feature_extractor.parameters())
-        # self.icm_only_params = [p for p in self.icm.parameters() if p not in encoder_params]
-
-        
-        # self.optimizer2 = torch.optim.Adam(self.icm_only_params, lr=self.lr)
-
+        self.eta = 0.05
+        self.icm = ICM(n_actions=self.action_size, conv_out_size = self.q_net.conv_out_size, encoder=self.q_net.feature_extractor).to(self.device)
+        encoder_params = set(self.q_net.feature_extractor.parameters())
+        self.icm_only_params = [p for p in self.icm.parameters() if p not in encoder_params]
+        self.optimizer2 = torch.optim.Adam(self.icm_only_params, lr=self.lr)
+ 
     def get_action(self, state):
         state = torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(self.device) #把state 轉為 [1, dimension]的維度
         with torch.no_grad():
@@ -58,31 +51,23 @@ class DQNAgent: # 用Double DQN
     def update(self):
         for p_target, p_online in zip(self.target_net.parameters(), self.q_net.parameters()):
             p_target.data.copy_(self.tau * p_online.data + (1 - self.tau) * p_target.data)
-        #self.target_net.load_state_dict(self.q_net.state_dict())
 
-    # def compute_sigma_loss(self, net):
-    #     sigma_loss = 0.0
-    #     for m in net.modules():
-    #         if isinstance(m, NoisyLinear):
-    #             # 懲罰接近 0 的 sigma
-    #             penalty = (0.5 - m.weight_sigma).clamp(min=0)
-    #             sigma_loss += penalty.mean()
-    #     return self.sigma_penalty * sigma_loss
     
     def train(self):
         # TODO: Sample a batch from the replay buffer
         self.q_net.reset_noise()
         self.target_net.reset_noise()
         self.optimizer.zero_grad()
+        self.optimizer2.zero_grad()
 
-        states, actions, rewards, next_states, dones, indices, weights = self.buffer.sample(self.batchsize)
+        states, actions, rewards_e, next_states, dones, indices, weights = self.buffer.sample(self.batchsize)
 
-        # inverse_loss, forward_loss, intrinsic_reward = self.icm(states, next_states, actions)
+        inverse_loss, forward_loss, intrinsic_reward = self.icm(states, next_states, actions)
         
-        # self.intrinsic_reward.append(intrinsic_reward.mean().item())
-        self.rewards_e.append(rewards.mean().item())
+        self.intrinsic_reward.append(intrinsic_reward.mean().item())
+        self.rewards_e.append(rewards_e.mean().item())
         # intrinsic reward weight
-        # rewards = rewards_e + self.eta * intrinsic_reward
+        rewards = rewards_e + self.eta * intrinsic_reward
         
         # TODO: Compute loss and update the model
         q_values = self.q_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -98,39 +83,19 @@ class DQNAgent: # 用Double DQN
         td_errors = (target_q_values - q_values)
         td_errors_for_priority = td_errors.detach()
 
-        #loss = (weights * td_errors.pow(2)).mean()
-
-        huber = torch.nn.functional.smooth_l1_loss(
-            td_errors,
-            torch.zeros_like(td_errors),
-            reduction='none',
-            beta=1.0
-        )
-        loss = (weights * huber).mean()
-        
-        # loss = q_loss + self.alpha * inverse_loss + self.beta * forward_loss
+        mse = td_errors ** 2
+        q_loss = (weights * mse).mean()
+        loss = q_loss + self.alpha * inverse_loss + self.beta * forward_loss
         loss.backward()
         # torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm = self.clip)
         self.optimizer.step()
         self.buffer.update_priorities(indices, td_errors_for_priority)
 
         self.q_loss_log.append(loss.item())
-        # self.inverse_loss_log.append(inverse_loss.item())
-        # self.forward_loss_log.append(forward_loss.item())
+        self.inverse_loss_log.append(inverse_loss.item())
+        self.forward_loss_log.append(forward_loss.item())
+        self.optimizer2.step()
 
-    def reset_noisy_sigma(self):
-            for net in (self.q_net, self.target_net):
-                for module in net.modules():
-                    if isinstance(module, NoisyLinear):
-                        # 只 reset sigma，不動 μ
-                        module.weight_sigma.data.fill_(
-                            module.sigma_init / math.sqrt(module.in_features)
-                        )
-                        if module.bias_sigma is not None:
-                            module.bias_sigma.data.fill_(
-                                module.sigma_init / math.sqrt(module.out_features)
-                            )
-                            
     def save_checkpoint(self, path_prefix):
         dirname = os.path.dirname(path_prefix)
         os.makedirs(dirname, exist_ok=True)

@@ -42,12 +42,17 @@ def main():
             action = agent.get_action(state)
 
             next_state, reward, done, info = env.step(action)
+            if info.get('flag_get', False):
+                second_stage += 1
+            
 
             agent.little_buffer.add((state.copy(), action, reward, next_state.copy(), done))
+
             if agent.little_buffer.is_full():
                 n_step_transition = agent.little_buffer.get_n_step_transition()
                 agent.buffer.add(*n_step_transition)  # 拆開來塞進去
                 agent.little_buffer.pop() 
+
             if done:
                 while len(agent.little_buffer.buffer) > 0:
                     n_step_transition = agent.little_buffer.get_n_step_transition()
@@ -64,33 +69,28 @@ def main():
             state = next_state  
             total_reward += reward
             #env.render()
-            if info.get('flag_get', False):
-                done = False
-                second_stage += 1
-            if done:
-                break
 
         avg_q   = np.mean(agent.q_loss_log)
-        # avg_inv = np.mean(agent.inverse_loss_log)
-        # avg_fwd = np.mean(agent.forward_loss_log)
+        avg_inv = np.mean(agent.inverse_loss_log)
+        avg_fwd = np.mean(agent.forward_loss_log)
 
         # # 計算 raw intrinsic/extrinsic mean 及 scaled intrinsic
-        # intr_mean_raw    = np.mean(agent.intrinsic_reward)
-        # extr_mean        = np.mean(agent.rewards_e)
-        # intr_mean_scaled = agent.eta * intr_mean_raw
+        intr_mean_raw    = np.mean(agent.intrinsic_reward)
+        extr_mean        = np.mean(agent.rewards_e)
+        intr_mean_scaled = agent.eta * intr_mean_raw
 
-        # total = avg_q + agent.alpha * avg_inv + agent.beta * avg_fwd
+        total = avg_q + agent.alpha * avg_inv + agent.beta * avg_fwd
 
         #紀錄
         wandb.log({
             "loss/q_loss":           avg_q,
-            #"loss/inverse":          agent.alpha * avg_inv,
-            #"loss/forward":          agent.beta  * avg_fwd,
-            # "loss/total":            total,
+            "loss/inverse":          agent.alpha * avg_inv,
+            "loss/forward":          agent.beta  * avg_fwd,
+             "loss/total":            total,
             "reward/episode":        total_reward,
-            #"reward/intrinsic_raw":  intr_mean_raw,
-            # "reward/intrinsic_scaled": intr_mean_scaled,
-            #"reward/extrinsic_mean": extr_mean,
+            "reward/intrinsic_raw":  intr_mean_raw,
+            "reward/intrinsic_scaled": intr_mean_scaled,
+            "reward/extrinsic_mean": extr_mean,
             "advantage_fc1_sigma": agent.q_net.advantage_fc1.weight_sigma.mean().item(),
             "advantage_fc2_sigma": agent.q_net.advantage_fc2.weight_sigma.mean().item(),
             "value_fc1_sigma": agent.q_net.value_fc1.weight_sigma.mean().item(),
@@ -100,9 +100,9 @@ def main():
 
         # 清空每集累積的 list
         agent.q_loss_log.clear()
-        # agent.inverse_loss_log.clear()
-        # agent.forward_loss_log.clear()
-        # agent.intrinsic_reward.clear()
+        agent.inverse_loss_log.clear()
+        agent.forward_loss_log.clear()
+        agent.intrinsic_reward.clear()
         agent.rewards_e.clear()
             # 更新狀態和總回報
         print(f"Episode {episode + 1}/{num_episodes}, Reward: {total_reward:.2f}, Second_stage: {second_stage}") #, epsilon: {agent.epsilon:.4f}

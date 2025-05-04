@@ -10,10 +10,10 @@ class Agent(object):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.action_space = gym.spaces.Discrete(12)
         self.agent = DQNAgent(action_size=12)
-        self.agent.load_checkpoint('mario_episode_600')
+        self.agent.load_checkpoint('mario_episode_900-1')
         self.frame_stack = deque(maxlen=4)
         self.action_buffer = []
-
+        self.agent.q_net.train()
 
     def _preprocess(self, observation):
         """
@@ -31,7 +31,7 @@ class Agent(object):
         while len(self.frame_stack) < self.frame_stack.maxlen:
             self.frame_stack.append(gray)
 
-        # Stack
+        
         stacked = np.stack(self.frame_stack, axis=0)
         # To tensor
         tensor = torch.tensor(stacked, dtype=torch.float32)/255.0
